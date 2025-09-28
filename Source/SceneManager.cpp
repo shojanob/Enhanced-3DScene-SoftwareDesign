@@ -59,70 +59,26 @@ SceneManager::~SceneManager()
  *  generating the mipmaps, and loading the read texture into
  *  the next available texture slot in memory.
  ***********************************************************/
-bool SceneManager::CreateGLTexture(const char* filename, std::string tag)
+// Loads a file, creates a GL texture, and stores it under `tag`.
+bool SceneManager::CreateGLTexture(const std::string& tag,
+                                   const std::string& filePath,
+                                   bool flipVertically)
 {
-	int width = 0;
-	int height = 0;
-	int colorChannels = 0;
-	GLuint textureID = 0;
+    GLuint tex = 0;
+    if (!loadTextureFromFile(filePath, tex, flipVertically)) {
+        std::cerr << "[SceneManager] Failed to create texture for tag '"
+                  << tag << "' from '" << filePath << "'\n";
+        return false;
+    }
 
-	// indicate to always flip images vertically when loaded
-	stbi_set_flip_vertically_on_load(true);
+    // If we already had a texture under this tag, delete it to prevent leaks
+    auto it = m_textureMap.find(tag);
+    if (it != m_textureMap.end() && it->second != 0) {
+        glDeleteTextures(1, &it->second);
+    }
 
-	// try to parse the image data from the specified image file
-	unsigned char* image = stbi_load(
-		filename,
-		&width,
-		&height,
-		&colorChannels,
-		0);
-
-	// if the image was successfully read from the image file
-	if (image)
-	{
-		std::cout << "Successfully loaded image:" << filename << ", width:" << width << ", height:" << height << ", channels:" << colorChannels << std::endl;
-
-		glGenTextures(1, &textureID);
-		glBindTexture(GL_TEXTURE_2D, textureID);
-
-		// set the texture wrapping parameters
-		glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_REPEAT);
-		glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_REPEAT);
-		// set texture filtering parameters
-		glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
-		glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
-
-		// if the loaded image is in RGB format
-		if (colorChannels == 3)
-			glTexImage2D(GL_TEXTURE_2D, 0, GL_RGB8, width, height, 0, GL_RGB, GL_UNSIGNED_BYTE, image);
-		// if the loaded image is in RGBA format - it supports transparency
-		else if (colorChannels == 4)
-			glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA8, width, height, 0, GL_RGBA, GL_UNSIGNED_BYTE, image);
-		else
-		{
-			std::cout << "Not implemented to handle image with " << colorChannels << " channels" << std::endl;
-			return false;
-		}
-
-		// generate the texture mipmaps for mapping textures to lower resolutions
-		glGenerateMipmap(GL_TEXTURE_2D);
-
-		// free the image data from local memory
-		stbi_image_free(image);
-		glBindTexture(GL_TEXTURE_2D, 0); // Unbind the texture
-
-		// register the loaded texture and associate it with the special tag string
-		m_textureIDs[m_loadedTextures].ID = textureID;
-		m_textureIDs[m_loadedTextures].tag = tag;
-		m_loadedTextures++;
-
-		return true;
-	}
-
-	std::cout << "Could not load image:" << filename << std::endl;
-
-	// Error loading the image
-	return false;
+    m_textureMap[tag] = tex;
+    return true;
 }
 
 /***********************************************************
@@ -147,17 +103,15 @@ void SceneManager::BindGLTextures()
  *  This method is used for freeing the memory in all the
  *  used texture memory slots.
  ***********************************************************/
+// Correctly deletes all GL textures created by SceneManager.
 void SceneManager::DestroyGLTextures()
 {
-    for (int i = 0; i < m_loadedTextures; i++)
-    {
-        if (m_textureIDs[i].ID != 0) {
-            glDeleteTextures(1, &m_textureIDs[i].ID);
-            m_textureIDs[i].ID = 0;
+    for (auto& kv : m_textureMap) {
+        if (kv.second != 0) {
+            glDeleteTextures(1, &kv.second);
         }
-        m_textureIDs[i].tag.clear();
     }
-    m_loadedTextures = 0;
+    m_textureMap.clear();
 }
 
 
@@ -167,24 +121,13 @@ void SceneManager::DestroyGLTextures()
  *  This method is used for getting an ID for the previously
  *  loaded texture bitmap associated with the passed in tag.
  ***********************************************************/
-int SceneManager::FindTextureID(std::string tag)
+GLuint SceneManager::FindTextureID(const std::string& tag) const
 {
-	int textureID = -1;
-	int index = 0;
-	bool bFound = false;
-
-	while ((index < m_loadedTextures) && (bFound == false))
-	{
-		if (m_textureIDs[index].tag.compare(tag) == 0)
-		{
-			textureID = m_textureIDs[index].ID;
-			bFound = true;
-		}
-		else
-			index++;
-	}
-
-	return(textureID);
+    auto it = m_textureMap.find(tag);
+    if (it != m_textureMap.end()) {
+        return it->second;
+    }
+    return 0; // 0 means "no texture" in OpenGL
 }
 
 /***********************************************************
@@ -366,6 +309,68 @@ void SceneManager::SetShaderMaterial(
 			m_pShaderManager->setFloatValue("material.shininess", material.shininess);
 		}
 	}
+}
+
+bool SceneManager::BindTextureByTag(const std::string& tag, GLenum target) const
+{
+    const GLuint id = FindTextureID(tag);
+    if (id == 0) return false;
+    glBindTexture(target, id);
+    return true;
+}
+
+bool SceneManager::TextureExists(const std::string& tag) const
+{
+    return m_textureMap.find(tag) != m_textureMap.end();
+}
+
+// =====================
+//  Private: File Loader
+// =====================
+
+bool SceneManager::loadTextureFromFile(const std::string& filePath,
+                                       GLuint& outTex,
+                                       bool flipVertically)
+{
+    stbi_set_flip_vertically_on_load(flipVertically ? 1 : 0);
+
+    int width = 0, height = 0, channels = 0;
+    unsigned char* data = stbi_load(filePath.c_str(), &width, &height, &channels, 0);
+    if (!data) {
+        std::cerr << "[SceneManager] stbi_load failed for " << filePath << "\n";
+        return false;
+    }
+
+    GLenum format = GL_RGB;
+    if (channels == 1)       format = GL_RED;
+    else if (channels == 3)  format = GL_RGB;
+    else if (channels == 4)  format = GL_RGBA;
+    else {
+        std::cerr << "[SceneManager] Unsupported channel count (" << channels
+                  << ") for " << filePath << "\n";
+        stbi_image_free(data);
+        return false;
+    }
+
+    glGenTextures(1, &outTex);
+    glBindTexture(GL_TEXTURE_2D, outTex);
+
+    // Texture upload
+    glTexImage2D(GL_TEXTURE_2D, 0, format, width, height,
+                 0, format, GL_UNSIGNED_BYTE, data);
+    glGenerateMipmap(GL_TEXTURE_2D);
+
+    // Default sampling/wrapping — tune to your project’s needs
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S,     GL_REPEAT);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T,     GL_REPEAT);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR_MIPMAP_LINEAR);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
+
+    // Unbind and free CPU data
+    glBindTexture(GL_TEXTURE_2D, 0);
+    stbi_image_free(data);
+
+    return true;
 }
 
 /**************************************************************/
