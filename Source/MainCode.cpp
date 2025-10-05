@@ -22,6 +22,8 @@
 #include "ViewManager.h"
 #include "ShapeMeshes.h"
 #include "ShaderManager.h"
+#include "DbHelper.h"
+#include <memory>
 
 // Namespace for declaring global variables
 namespace
@@ -32,6 +34,7 @@ namespace
     std::unique_ptr<SceneManager>  g_SceneManager;
     std::unique_ptr<ShaderManager> g_ShaderManager;
     std::unique_ptr<ViewManager>   g_ViewManager;
+	std::unique_ptr<DBHelper> g_Db;
 }
 wManager* g_ViewManager = nullptr;
 
@@ -55,6 +58,13 @@ int main(int argc, char* argv[])
 	{
 		return(EXIT_FAILURE);
 	}
+
+	// Initialize SQLite DB
+	g_Db = std::make_unique<DbHelper>("app.db");
+	if (!g_Db || !g_Db->isOpen()) {
+    fprintf(stderr, "[Main] Warning: DB not available; continuing without persistence.\n");
+	}
+
 
 	// try to create a new shader manager object
 	g_ShaderManager = new ShaderManager();
@@ -105,6 +115,14 @@ int main(int argc, char* argv[])
 		// query the latest GLFW events
 		glfwPollEvents();
 	}
+	static double telemetryAccum = 0.0;
+	telemetryAccum += deltaTime;
+
+	if (g_Db && g_Db->isOpen() && telemetryAccum >= 1.0) {
+    double fps = (deltaTime > 0.0) ? (1.0 / deltaTime) : 0.0;
+    g_Db->logTelemetry(fps, deltaTime * 1000.0);
+    telemetryAccum = 0.0;
+	}
 
 	// clear the allocated manager objects from memory
 	if (NULL != g_SceneManager)
@@ -122,6 +140,7 @@ int main(int argc, char* argv[])
 		delete g_ShaderManager;
 		g_ShaderManager = NULL;
 	}
+	if (g_Db) g_Db.reset();
 
 	// Terminates the program successfully
 	exit(EXIT_SUCCESS); 

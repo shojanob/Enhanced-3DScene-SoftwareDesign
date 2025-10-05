@@ -10,6 +10,9 @@
 
 
 #include "SceneManager.h"
+#include "DBHelper.h"
+extern std::unique_ptr<DbHelper> g_Db;
+
 
 #ifndef STB_IMAGE_IMPLEMENTATION
 #define STB_IMAGE_IMPLEMENTATION
@@ -337,8 +340,13 @@ bool SceneManager::loadTextureFromFile(const std::string& filePath,
     int width = 0, height = 0, channels = 0;
     unsigned char* data = stbi_load(filePath.c_str(), &width, &height, &channels, 0);
     if (!data) {
+		if (g_Db && g_Db->isOpen()) {
+    g_Db->logError("SceneManager", std::string("Failed to load texture: ") + filePath);
+}
+
         std::cerr << "[SceneManager] stbi_load failed for " << filePath << "\n";
         return false;
+
     }
 
     GLenum format = GL_RGB;
@@ -350,6 +358,10 @@ bool SceneManager::loadTextureFromFile(const std::string& filePath,
                   << ") for " << filePath << "\n";
         stbi_image_free(data);
         return false;
+		if (g_Db && g_Db->isOpen()) {
+    g_Db->logError("SceneManager", "Unsupported channel count in: " + filePath);
+}
+
     }
 
     glGenTextures(1, &outTex);

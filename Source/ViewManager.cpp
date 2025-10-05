@@ -8,12 +8,16 @@
 ///////////////////////////////////////////////////////////////////////////////
 
 #include "ViewManager.h"
+#include "DBHelper.h"
+  // from MainCode.cpp
+
 
 // GLM Math Header inclusions
 #include <glm/glm.hpp>
 #include <glm/gtx/transform.hpp>
 #include <glm/gtc/type_ptr.hpp>    
 
+extern std::unique_ptr<DbHelper> g_Db;
 // declaration of the global variables and defines
 ViewManager::ViewManager(ShaderManager *pShaderManager, const ViewConfig& cfg)
 {
@@ -25,6 +29,7 @@ ViewManager::ViewManager(ShaderManager *pShaderManager, const ViewConfig& cfg)
     m_camera->Up             = m_cfg.camUp;
     m_camera->Zoom           = m_cfg.defaultZoom;
     m_camera->MovementSpeed  = m_cfg.movementSpeed;
+	
 
     m_lastX = static_cast<float>(m_cfg.windowWidth)  / 2.0f;
     m_lastY = static_cast<float>(m_cfg.windowHeight) / 2.0f;
@@ -160,6 +165,17 @@ void ViewManager::ProcessKeyboardEvents()
 		// Set to orthographic projection.
 		bOrthographicProjection = true;
 	}
+
+	if (g_Db && g_Db->isOpen()) {
+    const char* proj = (m_bIsOrthoProjection ? "ORTHO" : "PERSPECTIVE");
+    g_Db->saveCameraProfile("default",
+        m_pCamera->Position.x,
+        m_pCamera->Position.y,
+        m_pCamera->Position.z,
+        m_pCamera->Zoom,
+        proj);
+}
+
 }
 
 
@@ -221,4 +237,15 @@ void ViewManager::Scroll_Callback(GLFWwindow* window, double xoffset, double yof
 	// Adjust the camera's movement speed based on the scroll input.
 	// The Camera's ProcessMouseScroll() method should modify MovementSpeed.
 	g_pCamera->ProcessMouseScroll((float)yoffset);
+
+	if (g_Db && g_Db->isOpen()) {
+    const char* proj = (m_bIsOrthoProjection ? "ORTHO" : "PERSPECTIVE");
+    g_Db->saveCameraProfile("default",
+        m_pCamera->Position.x,
+        m_pCamera->Position.y,
+        m_pCamera->Position.z,
+        m_pCamera->Zoom,
+        proj);
+}
+
 }
